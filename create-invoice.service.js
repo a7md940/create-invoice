@@ -1,11 +1,13 @@
-const fp = require('./fp-utils');
-const { CronJobTimes } = require('./cron-job-utils');
 const startCronJob = require('speero-backend/helpers/start.cron.job');
 const Helpers = require('speero-backend/helpers');
 const Invoice = require('speero-backend/modules/invoices');
 const DirectOrder = require('speero-backend/modules/direct.orders');
 const Part = require('speero-backend/modules/parts');
 const DirectOrderPart = require('speero-backend/modules/direct.order.parts');
+
+const fp = require('./utils/fp-utils');
+const { NegativeAmountError } = require('./utils/errors/negative-amount.error');
+const { CronJobTimes } = require('./utils/cron-job-utils');
 
 class CreateInvoiceService {
   constructor(directOrderRepo, invoiceRepo, directOrderPartRepo, partRepo) {
@@ -45,7 +47,11 @@ class CreateInvoiceService {
           totalAmount -= this.calculateDiscount(discountAmount, totalAmount, invoces);
         }
         if (totalAmount < 0) {
-          throw Error(`Could not create invoice for directOrder: ${directOrder._id} with totalAmount: ${totalAmount}. `);
+          const error = new NegativeAmountError(
+            `Could not create invoice for directOrder: ${directOrder._id} with totalAmount: ${totalAmount}.`
+          );
+
+          throw error;
         }
 
         const dps_id = this.getStockAndQoutaParts(allDirectOrderParts).map(fp.prop('_id'));
