@@ -18,9 +18,9 @@ class CreateInvoiceService {
     this.logger = logger;
   }
 
-  async createInvoice() {
+  async create() {
     try {
-      const allParts = await this.orderService.getAllParts(new Date('2021-04-01'))
+      const allParts = await this.orderService.getAllParts(new Date())
       const directOrderPartsGroups = Helpers.groupBy(allParts, 'directOrderId');
       const invcs = [];
 
@@ -133,7 +133,7 @@ const createInvoiceService = new CreateInvoiceService(
 
 startCronJob(
   CronJobTimes.EVERY_DAY_AT_12AM,
-  createInvoiceService.createInvoice.bind(createInvoiceService),
+  createInvoiceService.create.bind(createInvoiceService),
   true
 ); // at 00:00 every day
 
