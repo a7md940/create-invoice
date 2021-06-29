@@ -8,29 +8,30 @@ const DirectOrderPart = require('speero-backend/modules/direct.order.parts');
 const fp = require('./utils/fp-utils');
 const { NegativeAmountError } = require('./utils/errors/negative-amount.error');
 const { CronJobTimes } = require('./utils/cron-job-utils');
-
+const { InvoiceEffects } = require('./invoice-effects.service');
+const { OrderService } = require('./order.service');
 class CreateInvoiceService {
-  constructor(directOrderRepo, invoiceRepo, directOrderPartRepo, partRepo, logger = null) {
-    this.directOrderRepo = directOrderRepo;
+  constructor(invoiceRepo, invoiceEffects, orderService, logger = null) {
     this.invoiceRepo = invoiceRepo;
-    this.directOrderPartRepo = directOrderPartRepo;
-    this.partRepo = partRepo;
+    this.invoiceEffects = invoiceEffects;
+    this.orderService = orderService;
     this.logger = logger;
   }
 
   async createInvoice() {
     try {
-      const allParts = await this.getAllParts(new Date('2021-04-01'))
+      const allParts = await this.orderService.getAllParts(new Date('2021-04-01'))
       const directOrderPartsGroups = Helpers.groupBy(allParts, 'directOrderId');
       const invcs = [];
 
       for (const allDirectOrderParts of directOrderPartsGroups) {
+        const orderAttributes = ['partsIds', 'requestPartsIds', 'discountAmount', 'deliveryFees', 'walletPaymentAmount'];
+        const invoiceAttributes = ['walletPaymentAmount', 'discountAmount', 'deliveryFees'];
         const directOrderId = fp.pipe(fp.nth(0), fp.prop('directOrderId'))(allDirectOrderParts);
+
         const [directOrder, invoces] = await Promise.all([
-          this.directOrderRepo.findOne({ _id: directOrderId })
-            .select('partsIds requestPartsIds discountAmount deliveryFees walletPaymentAmount'),
-          this.invoiceRepo.find({ directOrderId })
-            .select('walletPaymentAmount discountAmount deliveryFees')
+          this.orderService.getDirectOrderById(directOrderId, orderAttributes),
+          this.invoiceRepo.find({ directOrderId }).select(invoiceAttributes.join(' '))
         ]);
 
         const totalPrice = this.getTotalPrice(allDirectOrderParts);
@@ -71,7 +72,7 @@ class CreateInvoiceService {
           discountAmount
         });
 
-        await this.onInvoiceCreated(invoice);
+        await this.invoiceEffects.onInvoiceCreated(invoice);
         invcs.push(invoice._id);
       }
 
@@ -83,34 +84,6 @@ class CreateInvoiceService {
     } catch (err) {
       Helpers.reportError(err);
     }
-  }
-
-  async onInvoiceCreated(invoice) {
-    const effects = [
-      this.updateDirectOrderByCreatedInvoice.bind(this),
-      this.updateDirectOrderParts.bind(this),
-      this.updatePart.bind(this)
-    ];
-    await Promise.all(effects.map((effect) => effect(invoice)));
-  }
-
-  async getAllParts(fromDate) {
-    const [directOrderParts, allParts] = await Promise.all([
-      this.directOrderPartRepo.find({
-        createdAt: { $gt: fromDate },
-        fulfillmentCompletedAt: { $exists: true },
-        invoiceId: { $exists: false }
-      })
-        .select('_id directOrderId partClass priceBeforeDiscount'),
-      this.partRepo.find({
-        directOrderId: { $exists: true },
-        createdAt: { $gt: fromDate },
-        partClass: 'requestPart',
-        pricedAt: { $exists: true },
-        invoiceId: { $exists: false }
-      }).select('_id directOrderId partClass premiumPriceBeforeDiscount')
-    ]);
-    return allParts.concat(directOrderParts)
   }
 
   getStockAndQoutaParts(allDirectOrderParts) {
@@ -149,34 +122,12 @@ class CreateInvoiceService {
     const discount = invoces.forEach((acc, invoice) => Math.min(0, acc - invoice.discountAmount), discountAmount);
     return Math.min(discount, totalAmount);
   }
-
-  updateDirectOrderByCreatedInvoice(invoice) {
-    const { directOrderId, _id } = invoice;
-    return this.directOrderRepo.updateOne({ _id: directOrderId }, {
-      $addToSet: { invoicesIds: _id }
-    });
-  }
-
-  updateDirectOrderParts(invoice) {
-    const { directOrderPartsIds, _id: invoiceId } = invoice;
-    return Promise.all(
-      directOrderPartsIds.map((_id) => this.directOrderPartRepo.updateOne({ _id }, { invoiceId }))
-    );
-  }
-
-  updatePart(invoice) {
-    const { requestPartsIds, _id: invoiceId } = invoice;
-    return Promise.all(
-      requestPartsIds.map((_id) => this.partRepo.updateOne({ _id }, { invoiceId }))
-    );
-  }
 }
 
 const createInvoiceService = new CreateInvoiceService(
-  DirectOrder.Model,
   Invoice.Model,
-  DirectOrderPart.Model,
-  Part.Model,
+  new InvoiceEffects(DirectOrder.Model, DirectOrderPart.Model, Part.Model),
+  new OrderService(DirectOrderPart.Model, Part.Model),
   console
 );
 
