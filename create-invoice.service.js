@@ -10,11 +10,12 @@ const { NegativeAmountError } = require('./utils/errors/negative-amount.error');
 const { CronJobTimes } = require('./utils/cron-job-utils');
 
 class CreateInvoiceService {
-  constructor(directOrderRepo, invoiceRepo, directOrderPartRepo, partRepo) {
+  constructor(directOrderRepo, invoiceRepo, directOrderPartRepo, partRepo, logger = null) {
     this.directOrderRepo = directOrderRepo;
     this.invoiceRepo = invoiceRepo;
     this.directOrderPartRepo = directOrderPartRepo;
     this.partRepo = partRepo;
+    this.logger = logger;
   }
 
   async createInvoice() {
@@ -50,6 +51,9 @@ class CreateInvoiceService {
           const error = new NegativeAmountError(
             `Could not create invoice for directOrder: ${directOrder._id} with totalAmount: ${totalAmount}.`
           );
+          if (this.logger) {
+            this.logger.error(error);
+          }
 
           throw error;
         }
@@ -172,7 +176,8 @@ const createInvoiceService = new CreateInvoiceService(
   DirectOrder.Model,
   Invoice.Model,
   DirectOrderPart.Model,
-  Part.Model
+  Part.Model,
+  console
 );
 
 startCronJob(
